@@ -66,10 +66,25 @@ const char* stopName(int stop) {
     return (stop >= 0 && stop < kStops) ? names[stop] : "未知站点";
 }
 
-const char* directionName(int direction) { return direction == 0 ? "S → E" : "E → S"; }
-int stopAt(int direction, int position) { return direction == 0 ? position : kStops - 1 - position; }
-int stopPosition(int direction, int stop) { return direction == 0 ? stop : kStops - 1 - stop; }
-int segmentAtPosition(int direction, int position) { return direction == 0 ? position : kSegments - 1 - position; }
+// 方向名称（direction：0 表示 S->E，1 表示 E->S）
+const char* directionName(int direction) {
+    return direction == 0 ? "S → E" : "E → S";
+}
+
+// 把行驶“位置编号”换算成站点编号（direction：方向；position：位置 0~3）
+int stopAt(int direction, int position) {
+    return direction == 0 ? position : kStops - 1 - position;
+}
+
+// 把站点编号换算成行驶“位置编号”（direction：方向；stop：站点 0~3）
+int stopPosition(int direction, int stop) {
+    return direction == 0 ? stop : kStops - 1 - stop;
+}
+
+// 把行驶“位置编号”换算成区间编号（direction：方向；position：位置 0~3）
+int segmentAtPosition(int direction, int position) {
+    return direction == 0 ? position : kSegments - 1 - position;
+}
 
 int priceByStops(int stops) {
     if (stops <= 1) return 70;
@@ -193,7 +208,10 @@ bool TransitStore::restore(const std::filesystem::path& source, std::string& err
     std::error_code ec;
     // 第一步：确认备份目录里四个数据文件齐全
     for (const char* name : {"bus.txt", "passenger.txt", "admin.txt", "orders.txt"}) {
-        if (!std::filesystem::exists(source / name)) { error = "备份缺少：" + std::string(name); return false; }
+        if (!std::filesystem::exists(source / name)) {
+            error = "备份缺少：" + std::string(name);
+            return false;
+        }
     }
     // 第二步：先在临时对象里完整加载一遍，格式有问题就中止，避免破坏现有数据
     TransitStore candidate(source);
@@ -208,54 +226,217 @@ bool TransitStore::restore(const std::filesystem::path& source, std::string& err
 }
 
 bool TransitStore::loadBuses(std::string& error) {
-    std::string text; if (!loadTextFile(dataDir_ / "bus.txt", text, error)) return false;
-    buses_.clear(); std::istringstream input(text); std::string line; Bus* current = nullptr; bool segments[kSegments]{};
+    std::string text;
+    if (!loadTextFile(dataDir_ / "bus.txt", text, error)) return false;
+
+    buses_.clear();
+    std::istringstream input(text);
+    std::string line;
+    Bus* current = nullptr;          // 正在读取的班次
+    bool segments[kSegments]{};      // 记录该班次三个区间的座位图是否都已读到
+
+    // 收尾上一个班次：校验三个区间座位数据齐全
     auto finishBus = [&]() {
         if (!current) return true;
-        for (bool loaded : segments) if (!loaded) { error = "bus.txt 座位区间数据不完整"; return false; }
+        for (bool loaded : segments) {
+            if (!loaded) {
+                error = "bus.txt 座位区间数据不完整";
+                return false;
+            }
+        }
         return true;
     };
+
     while (std::getline(input, line)) {
-        line = trim(line); if (line.empty() || line[0] == '#') continue;
-        std::istringstream row(line); std::string tag; row >> tag;
-        if (tag == "BUS") { if (!finishBus()) return false; int id, hour, dir, enabled = 1; row >> id >> hour >> dir; if (row >> enabled) {}
-            if (id <= 0 || hour < 0 || hour > 23 || (dir != 0 && dir != 1)) { error = "bus.txt 中 BUS 数据无效"; return false; }
-            buses_.emplace_back(id, hour, dir, enabled != 0); current = &buses_.back(); std::fill(std::begin(segments), std::end(segments), false);
-        } else if (tag == "SEG" && current) { int segment; row >> segment; if (segment < 0 || segment >= kSegments) { error = "bus.txt 中区间无效"; return false; }
-            for (int r = 0; r < kRows; ++r) { if (!std::getline(input, line)) { error = "bus.txt 座位数据不完整"; return false; } std::istringstream seats(line); for (int c = 0; c < kCols; ++c) if (!(seats >> current->seats[segment][r][c])) { error = "bus.txt 座位数据无效"; return false; } }
+        line = trim(line);
+        if (line.empty() || line[0] == '#') continue;
+
+        std::istringstream row(line);
+        std::string tag;
+        row >> tag;
+
+        if (tag == "BUS") {
+            if (!finishBus()) return false;
+            int id, hour, dir, enabled = 1;
+            row >> id >> hour >> dir;
+            if (row >> enabled) {} // 第 5 列“是否运行”可选，存在则读入 enabled
+            if (id <= 0 || hour < 0 || hour > 23 || (dir != 0 && dir != 1)) {
+                error = "bus.txt 中 BUS 数据无效";
+                return false;
+            }
+            buses_.emplace_back(id, hour, dir, enabled != 0);
+            current = &buses_.back();
+            std::fill(std::begin(segments), std::end(segments), false);
+        } else if (tag == "SEG" && current) {
+            int segment;
+            row >> segment;
+            if (segment < 0 || segment >= kSegments) {
+                error = "bus.txt 中区间无效";
+                return false;
+            }
+            // 连续 kRows 行是座位图，每行 kCols 个状态值
+            for (int r = 0; r < kRows; ++r) {
+                if (!std::getline(input, line)) {
+                    error = "bus.txt 座位数据不完整";
+                    return false;
+                }
+                std::istringstream seats(line);
+                for (int c = 0; c < kCols; ++c) {
+                    if (!(seats >> current->seats[segment][r][c])) {
+                        error = "bus.txt 座位数据无效";
+                        return false;
+                    }
+                }
+            }
             segments[segment] = true;
         }
     }
     if (!finishBus()) return false;
-    if (buses_.empty()) { error = "没有可用班次"; return false; }
+    if (buses_.empty()) {
+        error = "没有可用班次";
+        return false;
+    }
     return true;
 }
 
 bool TransitStore::loadAccounts(std::string& error) {
-    std::string text; if (!loadTextFile(dataDir_ / "passenger.txt", text, error)) return false;
-    accounts_.clear(); std::istringstream input(text); std::string line;
-    while (std::getline(input, line)) { line = trim(line); if (line.empty() || line[0] == '#') continue; std::istringstream row(line); Account account; row >> account.phone >> account.password >> account.name; int enabled = 1; row >> enabled; account.enabled = enabled != 0; if (!isValidPhone(account.phone)) { error = "存在无效手机号"; return false; } accounts_.push_back(account); }
-    if (accounts_.empty()) { error = "没有乘客账户"; return false; } return true;
-}
+    std::string text;
+    if (!loadTextFile(dataDir_ / "passenger.txt", text, error)) return false;
 
-bool TransitStore::loadAdmins(std::string& error) {
-    std::string text; if (!loadTextFile(dataDir_ / "admin.txt", text, error)) return false;
-    admins_.clear(); std::istringstream input(text); std::string line;
-    while (std::getline(input, line)) { line = trim(line); if (line.empty() || line[0] == '#') continue; std::istringstream row(line); Admin admin; row >> admin.account >> admin.password >> admin.name; if (!admin.account.empty()) admins_.push_back(admin); }
-    if (admins_.empty()) { error = "没有管理员账户"; return false; } return true;
-}
+    accounts_.clear();
+    std::istringstream input(text);
+    std::string line;
 
-bool TransitStore::loadOrders(std::string& error) {
-    std::string text; if (!loadTextFile(dataDir_ / "orders.txt", text, error)) return false;
-    orders_.clear(); std::istringstream input(text); std::string line;
-    while (std::getline(input, line)) { line = trim(line); if (line.empty() || line[0] == '#') continue; auto f = split(line, ','); if (f.size() < 12) { error = "订单数据列数不足"; return false; } Ticket t; t.id=f[0]; t.date=f[1]; t.phone=f[3]; t.name=f[4]; if (!integer(f[2],t.busId)||!integer(f[5],t.from)||!integer(f[6],t.to)||!integer(f[7],t.row)||!integer(f[8],t.col)||!integer(f[9],t.price)||!integer(f[10],t.mask)||!integer(f[11],t.status)) { error = "订单数据无效"; return false; } orders_.push_back(t); }
+    while (std::getline(input, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') continue;
+
+        std::istringstream row(line);
+        Account account;
+        row >> account.phone >> account.password >> account.name;
+        int enabled = 1;
+        row >> enabled;
+        account.enabled = enabled != 0;
+
+        if (!isValidPhone(account.phone)) {
+            error = "存在无效手机号";
+            return false;
+        }
+        accounts_.push_back(account);
+    }
+    if (accounts_.empty()) {
+        error = "没有乘客账户";
+        return false;
+    }
     return true;
 }
 
-std::string TransitStore::serializeBuses() const { std::ostringstream out; out << "# bus.txt\n"; for (const auto& b : buses_) { out << "BUS "<<b.id<<' '<<b.hour<<' '<<b.direction<<' '<<(b.enabled?1:0)<<'\n'; for(int s=0;s<kSegments;++s){out<<"SEG "<<s<<'\n'; for(int r=0;r<kRows;++r){for(int c=0;c<kCols;++c){if(c)out<<' ';out<<b.seats[s][r][c];}out<<'\n';}}} return out.str(); }
-std::string TransitStore::serializeAccounts() const { std::ostringstream out; for(const auto& a:accounts_) out<<a.phone<<' '<<a.password<<' '<<a.name<<' '<<(a.enabled?1:0)<<'\n'; return out.str(); }
-std::string TransitStore::serializeAdmins() const { std::ostringstream out; for(const auto& a:admins_) out<<a.account<<' '<<a.password<<' '<<a.name<<'\n'; return out.str(); }
-std::string TransitStore::serializeOrders() const { std::ostringstream out; out<<"# orders.txt\n"; for(const auto& t:orders_) out<<t.id<<','<<t.date<<','<<t.busId<<','<<t.phone<<','<<t.name<<','<<t.from<<','<<t.to<<','<<t.row<<','<<t.col<<','<<t.price<<','<<t.mask<<','<<t.status<<'\n'; return out.str(); }
+bool TransitStore::loadAdmins(std::string& error) {
+    std::string text;
+    if (!loadTextFile(dataDir_ / "admin.txt", text, error)) return false;
+
+    admins_.clear();
+    std::istringstream input(text);
+    std::string line;
+
+    while (std::getline(input, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') continue;
+
+        std::istringstream row(line);
+        Admin admin;
+        row >> admin.account >> admin.password >> admin.name;
+        if (!admin.account.empty()) admins_.push_back(admin);
+    }
+    if (admins_.empty()) {
+        error = "没有管理员账户";
+        return false;
+    }
+    return true;
+}
+
+bool TransitStore::loadOrders(std::string& error) {
+    std::string text;
+    if (!loadTextFile(dataDir_ / "orders.txt", text, error)) return false;
+
+    orders_.clear();
+    std::istringstream input(text);
+    std::string line;
+
+    while (std::getline(input, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') continue;
+
+        // 订单文件按逗号分隔：id,date,busId,phone,name,from,to,row,col,price,mask,status
+        auto f = split(line, ',');
+        if (f.size() < 12) {
+            error = "订单数据列数不足";
+            return false;
+        }
+        Ticket t;
+        t.id = f[0];
+        t.date = f[1];
+        t.phone = f[3];
+        t.name = f[4];
+        if (!integer(f[2], t.busId) || !integer(f[5], t.from) ||
+            !integer(f[6], t.to) || !integer(f[7], t.row) ||
+            !integer(f[8], t.col) || !integer(f[9], t.price) ||
+            !integer(f[10], t.mask) || !integer(f[11], t.status)) {
+            error = "订单数据无效";
+            return false;
+        }
+        orders_.push_back(t);
+    }
+    return true;
+}
+
+std::string TransitStore::serializeBuses() const {
+    std::ostringstream out;
+    out << "# bus.txt\n";
+    for (const auto& b : buses_) {
+        out << "BUS " << b.id << ' ' << b.hour << ' ' << b.direction << ' '
+            << (b.enabled ? 1 : 0) << '\n';
+        for (int s = 0; s < kSegments; ++s) {
+            out << "SEG " << s << '\n';
+            for (int r = 0; r < kRows; ++r) {
+                for (int c = 0; c < kCols; ++c) {
+                    if (c) out << ' ';
+                    out << b.seats[s][r][c];
+                }
+                out << '\n';
+            }
+        }
+    }
+    return out.str();
+}
+
+std::string TransitStore::serializeAccounts() const {
+    std::ostringstream out;
+    for (const auto& a : accounts_) {
+        out << a.phone << ' ' << a.password << ' ' << a.name << ' '
+            << (a.enabled ? 1 : 0) << '\n';
+    }
+    return out.str();
+}
+
+std::string TransitStore::serializeAdmins() const {
+    std::ostringstream out;
+    for (const auto& a : admins_) {
+        out << a.account << ' ' << a.password << ' ' << a.name << '\n';
+    }
+    return out.str();
+}
+
+std::string TransitStore::serializeOrders() const {
+    std::ostringstream out;
+    out << "# orders.txt\n";
+    for (const auto& t : orders_) {
+        out << t.id << ',' << t.date << ',' << t.busId << ',' << t.phone << ','
+            << t.name << ',' << t.from << ',' << t.to << ',' << t.row << ','
+            << t.col << ',' << t.price << ',' << t.mask << ',' << t.status << '\n';
+    }
+    return out.str();
+}
 
 void TransitStore::rebuildTodaySeats() {
     const std::string today = systemDateText();
@@ -286,20 +467,144 @@ void TransitStore::rebuildTodaySeats() {
     }
 }
 
-const Account* TransitStore::findAccount(const std::string& phone) const { for(const auto& a:accounts_) if(a.phone==phone) return &a; return nullptr; }
-Account* TransitStore::findAccount(const std::string& phone) { for(auto& a:accounts_) if(a.phone==phone) return &a; return nullptr; }
-Bus* TransitStore::findBus(int id) { for(auto& b:buses_) if(b.id==id) return &b; return nullptr; }
-const Bus* TransitStore::findBus(int id) const { for(const auto& b:buses_) if(b.id==id) return &b; return nullptr; }
-Ticket* TransitStore::findTicket(const std::string& id) { for(auto& t:orders_) if(t.id==id) return &t; return nullptr; }
+// 查找乘客账户（phone：手机号；返回值：找到返回指针，否则 nullptr）
+const Account* TransitStore::findAccount(const std::string& phone) const {
+    for (const auto& a : accounts_) {
+        if (a.phone == phone) return &a;
+    }
+    return nullptr;
+}
 
-const Account* TransitStore::passengerLogin(const std::string& phone, const std::string& password) const { const auto* a=findAccount(phone); return a&&a->enabled&&a->password==password?a:nullptr; }
-const Admin* TransitStore::adminLogin(const std::string& account, const std::string& password) const { for(const auto& a:admins_) if(a.account==account&&a.password==password) return &a; return nullptr; }
+// 查找乘客账户
+Account* TransitStore::findAccount(const std::string& phone) {
+    for (auto& a : accounts_) {
+        if (a.phone == phone) return &a;
+    }
+    return nullptr;
+}
 
-bool TransitStore::registerPassenger(const std::string& phone,const std::string& password,const std::string& name,std::string& error){ if(!isValidPhone(phone)){error="手机号必须为 11 位数字";return false;} if(password.size()<6||password.size()>20||whitespace(password)){error="密码长度必须为 6-20 位且不能含空格";return false;} if(name.empty()){error="姓名不能为空";return false;} if(findAccount(phone)){error="手机号已注册";return false;} accounts_.push_back({phone,password,name,true}); return save(error); }
+// 查找班次（id：班次编号；返回值：找到返回指针，否则 nullptr）
+Bus* TransitStore::findBus(int id) {
+    for (auto& b : buses_) {
+        if (b.id == id) return &b;
+    }
+    return nullptr;
+}
 
-int TransitStore::seatStatus(const Bus& bus,int from,int to,int row,int col) const { int p1=stopPosition(bus.direction,from),p2=stopPosition(bus.direction,to); for(int p=p1;p<p2;++p) if(bus.seats[segmentAtPosition(bus.direction,p)][row][col]==SEAT_BOOKED)return SEAT_BOOKED; for(int p=p1;p<p2;++p) if(bus.seats[segmentAtPosition(bus.direction,p)][row][col]==SEAT_NONE)return SEAT_NONE; return SEAT_FREE; }
-int TransitStore::availableSeats(const Bus& bus,int from,int to) const { int count=0; for(int r=0;r<kRows;++r)for(int c=0;c<kCols;++c)if(seatStatus(bus,from,to,r,c)==SEAT_FREE)++count;return count; }
-int TransitStore::wholeRouteFree(const Bus& bus) const { return availableSeats(bus, bus.direction==0?0:3, bus.direction==0?3:0); }
+// 查找班次（只读版本）
+const Bus* TransitStore::findBus(int id) const {
+    for (const auto& b : buses_) {
+        if (b.id == id) return &b;
+    }
+    return nullptr;
+}
+
+// 查找订单（id：订单号；返回值：找到返回指针，否则 nullptr）
+Ticket* TransitStore::findTicket(const std::string& id) {
+    for (auto& t : orders_) {
+        if (t.id == id) return &t;
+    }
+    return nullptr;
+}
+
+// 乘客登录（phone：手机号；password：密码；返回值：账号存在、已启用且密码正确返回指针，否则 nullptr）
+const Account* TransitStore::passengerLogin(const std::string& phone,
+                                            const std::string& password) const {
+    const auto* a = findAccount(phone);
+    return (a && a->enabled && a->password == password) ? a : nullptr;
+}
+
+// 管理员登录（account：账号；password：密码；返回值：账号密码匹配返回指针，否则 nullptr）
+const Admin* TransitStore::adminLogin(const std::string& account,
+                                      const std::string& password) const {
+    for (const auto& a : admins_) {
+        if (a.account == account && a.password == password) return &a;
+    }
+    return nullptr;
+}
+
+// 注册乘客（phone：手机号；password：密码；name：姓名；error：失败原因输出；返回值：校验通过并保存成功返回 true）
+bool TransitStore::registerPassenger(const std::string& phone,
+                                     const std::string& password,
+                                     const std::string& name,
+                                     std::string& error) {
+    if (!isValidPhone(phone)) {
+        error = "手机号必须为 11 位数字";
+        return false;
+    }
+    if (password.size() < 6 || password.size() > 20 || whitespace(password)) {
+        error = "密码长度必须为 6-20 位且不能含空格";
+        return false;
+    }
+    if (name.empty()) {
+        error = "姓名不能为空";
+        return false;
+    }
+    if (findAccount(phone)) {
+        error = "手机号已注册";
+        return false;
+    }
+    accounts_.push_back({phone, password, name, true});
+    return save(error);
+}
+
+// 查询某座位在 [from,to) 区间上的状态（bus：班次；from/to：起终点站；row/col：座位行列；返回值：SEAT_BOOKED/SEAT_NONE/SEAT_FREE）
+int TransitStore::seatStatus(const Bus& bus, int from, int to, int row, int col) const {
+    const int p1 = stopPosition(bus.direction, from);
+    const int p2 = stopPosition(bus.direction, to);
+    for (int p = p1; p < p2; ++p) {
+        if (bus.seats[segmentAtPosition(bus.direction, p)][row][col] == SEAT_BOOKED) {
+            return SEAT_BOOKED;
+        }
+    }
+    for (int p = p1; p < p2; ++p) {
+        if (bus.seats[segmentAtPosition(bus.direction, p)][row][col] == SEAT_NONE) {
+            return SEAT_NONE;
+        }
+    }
+    return SEAT_FREE;
+}
+
+// 统计班次在 [from,to) 区间上的可用座位数（bus：班次；from/to：起终点站；返回值：空闲座位数量）
+int TransitStore::availableSeats(const Bus& bus, int from, int to) const {
+    int count = 0;
+    for (int r = 0; r < kRows; ++r) {
+        for (int c = 0; c < kCols; ++c) {
+            if (seatStatus(bus, from, to, r, c) == SEAT_FREE) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+// 统计班次全程（起点到终点）的可用座位数（bus：班次；返回值：全程空闲座位数量）
+int TransitStore::wholeRouteFree(const Bus& bus) const {
+    const int from = (bus.direction == 0) ? 0 : 3; // 方向 S->E 从 0 号站出发，E->S 从 3 号站出发
+    const int to   = (bus.direction == 0) ? 3 : 0; // 方向 S->E 到 3 号站，E->S 到 0 号站
+    return availableSeats(bus, from, to);
+}
+
+// 统计某班次在指定日期的全程可用座位数（bus：班次；date：yyyy-MM-dd；返回值：该日期全程空闲座位数）
+int TransitStore::wholeRouteFree(const Bus& bus, const std::string& date) const {
+    // 用构造器生成一辆“空车”：座位按默认布局，真实座位全空闲、无座位置保持无座
+    Bus temp(bus.id, bus.hour, bus.direction, bus.enabled);
+    // 把该班次在该日期下未取消的订单标成已订（占满订单对应的区间）
+    for (const auto& t : orders_) {
+        if (t.status != ORDER_ACTIVE || t.date != date || t.busId != bus.id) continue;
+        if (t.row < 0 || t.row >= kRows || t.col < 0 || t.col >= kCols) continue;
+        const int p1 = stopPosition(bus.direction, t.from);
+        const int p2 = stopPosition(bus.direction, t.to);
+        if (p1 < 0 || p2 > kStops - 1 || p1 >= p2) continue;
+        for (int p = p1; p < p2; ++p) {
+            const int segment = segmentAtPosition(bus.direction, p);
+            if (temp.seats[segment][t.row][t.col] != SEAT_NONE) {
+                temp.seats[segment][t.row][t.col] = SEAT_BOOKED;
+            }
+        }
+    }
+    return wholeRouteFree(temp); // 复用单参版本数出全程空闲座位
+}
 int TransitStore::arrivalMinutes(const Bus& bus, int stop) const {
     return bus.hour * 60 +
            stopPosition(bus.direction, stop) * kSegmentMinutes;
@@ -312,11 +617,10 @@ int TransitStore::activeTicketsForPhone(const std::string& phone) const {
         return t.phone == phone && t.date == today && t.status == ORDER_ACTIVE;
     });
 }
-// 统计某班次今天的有效订单数（busId：班次编号；返回值：订单数量）
+// 统计某班次未取消的订单数（busId：班次编号；返回值：订单数量；不分日期，历史未取消订单也算）
 int TransitStore::activeTicketsForBus(int busId) const {
-    const auto today = systemDateText();             // 系统今天的日期
     return std::count_if(orders_.begin(), orders_.end(), [&](const Ticket& t) {
-        return t.busId == busId && t.date == today && t.status == ORDER_ACTIVE;
+        return t.busId == busId && t.status == ORDER_ACTIVE;
     });
 }
 // 统计某班次在指定日期的未取消订单数（busId：班次编号；date：yyyy-MM-dd；返回值：订单数量）
@@ -446,6 +750,55 @@ bool TransitStore::cancelOrder(const std::string& orderId, const std::string& ph
 }
 
 /*
+ * 撤销取消订单。
+ * 参数：orderId - 订单号；error - 失败原因输出。
+ * 返回值：已恢复为有效返回 true；订单不存在、未取消、座位冲突或超出票数上限返回 false。
+ */
+bool TransitStore::restoreOrder(const std::string& orderId, std::string& error) {
+    auto* t = findTicket(orderId);                   // 按订单号查找订单
+    if (!t) { error = "订单不存在"; return false; }
+    if (t->status != ORDER_CANCELLED) { error = "该订单未被取消，无需撤销"; return false; }
+
+    const bool today = t->date == systemDateText();  // 历史订单不占今天的座位
+    Bus* b = today ? findBus(t->busId) : nullptr;
+    if (today) {
+        if (!b) { error = "班次已不存在，无法撤销取消"; return false; }
+        if (t->row < 0 || t->row >= kRows || t->col < 0 || t->col >= kCols) {
+            error = "订单座位数据无效";
+            return false;
+        }
+        // 恢复后等于重新持有一张今日有效票，仍需遵守每手机号最多 3 张的限制
+        if (activeTicketsForPhone(t->phone) >= kMaxTicketsPerPhone) {
+            error = "该乘客今天的有效票已达上限，无法撤销取消";
+            return false;
+        }
+        // 取消期间座位可能已被其他有效订单占用，恢复前逐区间检查冲突
+        for (int s = 0; s < kSegments; ++s) {
+            if (!(t->mask & (1 << s))) continue;     // 该订单没占用这个区间则跳过
+            for (const auto& x : orders_) {
+                if (x.id != t->id && x.status == ORDER_ACTIVE && x.date == t->date &&
+                    x.busId == t->busId && x.row == t->row && x.col == t->col &&
+                    (x.mask & (1 << s))) {
+                    error = "座位已被其他订单占用，无法撤销取消";
+                    return false;
+                }
+            }
+        }
+    }
+
+    t->status = ORDER_ACTIVE;     // 恢复为有效订单
+    // 今日订单需要重新占用原区间座位；SEAT_NONE 的布局空缺位保持不动
+    if (today) {
+        for (int s = 0; s < kSegments; ++s) {
+            if (!(t->mask & (1 << s))) continue;
+            if (b->seats[s][t->row][t->col] != SEAT_NONE)
+                b->seats[s][t->row][t->col] = SEAT_BOOKED;
+        }
+    }
+    return save(error);     // 保存全部数据文件
+}
+
+/*
  * 新增班次。
  * 参数：id - 班次编号；hour - 发车小时（0-23）；direction - 方向（0: S->E，1: E->S）；
  *       error - 失败原因输出。
@@ -462,11 +815,13 @@ bool TransitStore::addBus(int id, int hour, int direction, std::string& error) {
 /*
  * 修改班次发车时间。
  * 参数：id - 班次编号；hour - 新的发车小时（0-23）；error - 失败原因输出。
- * 返回值：班次存在且小时合法时返回 true，否则 false。
+ * 返回值：班次存在、小时合法且无未取消订单时返回 true，否则 false。
  */
 bool TransitStore::updateBus(int id, int hour, std::string& error) {
     auto* b = findBus(id);                           // 查找班次
     if (!b || hour < 0 || hour > 23) { error = "班次或时间无效"; return false; }
+    // 存在未取消订单时不允许改发车时间，避免已购票乘客行程受影响
+    if (activeTicketsForBus(id)) { error = "存在有效订单，不能修改发车时间"; return false; }
     b->hour = hour;                                  // 更新发车小时
     return save(error);
 }
@@ -474,7 +829,7 @@ bool TransitStore::updateBus(int id, int hour, std::string& error) {
 /*
  * 修改班次行驶方向。
  * 参数：id - 班次编号；direction - 新方向（0: S->E，1: E->S）；error - 失败原因输出。
- * 返回值：成功返回 true；班次不存在、方向非法或今天有有效订单时返回 false。
+ * 返回值：成功返回 true；班次不存在、方向非法或存在未取消订单时返回 false。
  */
 bool TransitStore::updateBusDirection(int id, int direction, std::string& error) {
     auto* b = findBus(id);                           // 查找班次
@@ -488,7 +843,7 @@ bool TransitStore::updateBusDirection(int id, int direction, std::string& error)
 /*
  * 启用/停运切换。
  * 参数：id - 班次编号；error - 失败原因输出。
- * 返回值：成功返回 true；班次不存在或运行中且有今天的有效订单时返回 false。
+ * 返回值：成功返回 true；班次不存在或运行中且存在未取消订单时返回 false。
  */
 bool TransitStore::toggleBus(int id, std::string& error) {
     auto* b = findBus(id);                           // 查找班次
@@ -530,8 +885,12 @@ bool TransitStore::addAccount(const Account& account, std::string& error) {
         error = "账户信息无效";
         return false;
     }
-    if (findAccount(account.phone)) { error = "手机号已存在"; return false; } // 手机号唯一
-    accounts_.push_back(account);                    // 加入账户列表
+    // 手机号唯一
+    if (findAccount(account.phone)) { 
+        error = "手机号已存在"; 
+        return false;
+    } 
+    accounts_.push_back(account);       // 加入账户列表
     return save(error);
 }
 
@@ -555,15 +914,14 @@ bool TransitStore::deleteAccount(const std::string& phone, std::string& error) {
  * 参数：phone - 手机号；password - 新密码（6-20 位、无空格）；error - 失败原因输出。
  * 返回值：成功返回 true；账户或新密码不合法时返回 false。
  */
-bool TransitStore::resetPassword(const std::string& phone, const std::string& password,
-                                 std::string& error) {
-    auto* a = findAccount(phone);                    // 查找账户
+bool TransitStore::resetPassword(const std::string& phone, const std::string& password, std::string& error) {
+    auto* a = findAccount(phone);    // 查找账户
     // 密码长度必须为 6-20 位且不含空格
     if (!a || password.size() < 6 || password.size() > 20 || whitespace(password)) {
         error = "账户或密码无效，密码需为 6-20 位";
         return false;
     }
-    a->password = password;                          // 更新密码
+    a->password = password;       // 更新密码
     return save(error);
 }
 
@@ -575,7 +933,7 @@ bool TransitStore::resetPassword(const std::string& phone, const std::string& pa
 bool TransitStore::toggleAccount(const std::string& phone, std::string& error) {
     auto* a = findAccount(phone);                    // 查找账户
     if (!a) { error = "账户不存在"; return false; }
-    a->enabled = !a->enabled;                        // 切换启用状态
+    a->enabled = !a->enabled;       // 切换启用状态
     return save(error);
 }
 

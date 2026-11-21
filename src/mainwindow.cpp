@@ -20,6 +20,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QStandardPaths>
 #include <QSignalBlocker>
 #include <QPushButton>
@@ -33,23 +34,23 @@
 
 namespace {
 
-QString q(const char* value) { 
-    return QString::fromUtf8(value); 
+QString q(const char* value) {          // 把 C 字符串转成 QString（UTF-8）
+    return QString::fromUtf8(value);
 }
-QLabel* title(const QString& value) { 
-    auto* label = new QLabel(value); 
+QLabel* title(const QString& value) {   // 创建页面标题标签（带 pageTitle 样式）
+    auto* label = new QLabel(value);
     label->setObjectName("pageTitle");
-    return label; 
+    return label;
 }
-QPushButton* button(const QString& value, bool primary = false) { 
-    auto* b = new QPushButton(value); 
-    if(primary)b->setObjectName("primaryButton"); 
-    return b; 
+QPushButton* button(const QString& value, bool primary = false) { // 创建按钮；primary=true 时为主按钮样式
+    auto* b = new QPushButton(value);
+    if(primary)b->setObjectName("primaryButton");
+    return b;
 }
-QWidget* card() { 
+QWidget* card() {                       // 创建白色卡片容器（带 card 样式）
     auto* w = new QWidget;
-    w->setObjectName("card"); 
-    return w; 
+    w->setObjectName("card");
+    return w;
 }
 
 QString prepareDataDirectory() {
@@ -59,19 +60,19 @@ QString prepareDataDirectory() {
     return dir;
 }
 
-void clearPanel(QWidget* panel) {
+void clearPanel(QWidget* panel) {       // 清空面板内的所有子控件和布局（用于重建座位图）
     if (!panel || !panel->layout()) return;
     QLayout* old = panel->layout();
     while (QLayoutItem* item = old->takeAt(0)) {
-        if (QWidget* widget = item->widget()) delete widget;
-        if (QLayout* child = item->layout()) delete child;
+        if (QWidget* widget = item->widget()) delete widget;   // 删除子控件
+        if (QLayout* child = item->layout()) delete child;     // 删除子布局
         delete item;
     }
     delete old;
 }
 
-QString errorText(const std::string& value) { 
-    return QString::fromUtf8(value.c_str()); 
+QString errorText(const std::string& value) {  // 把业务层 std::string 错误信息转成 QString
+    return QString::fromUtf8(value.c_str());
 }
 
 } // namespace
@@ -114,95 +115,159 @@ MainWindow::MainWindow(QWidget* parent)
     refreshClockAndAvailability();
 }
 
+// 事件过滤器：点击班次管理表格的空白处（没有班次的区域）时取消当前选中的行
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    // 只处理班次表格视口上的鼠标按下事件
+    if (watched == busTable_->viewport() && event->type() == QEvent::MouseButtonPress) {
+        const auto* mouse = static_cast<QMouseEvent*>(event); // 鼠标事件
+        // indexAt 返回点击位置的单元格；点在空白处时索引无效 → 清除整行选中
+        if (!busTable_->indexAt(mouse->pos()).isValid()) {
+            busTable_->clearSelection();
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);   // 其余事件交还基类处理
+}
+
 QString MainWindow::text(const std::string& value) const { return QString::fromUtf8(value.c_str()); }
 QString MainWindow::text(const char* value) const { return QString::fromUtf8(value ? value : ""); }
 
-//构建窗口
+// 构建主窗口：把各页面加入页面栈，默认显示欢迎页
 void MainWindow::buildPages() {
-    pages_ = new QStackedWidget(this);
+    pages_ = new QStackedWidget(this);      // 页面栈：在欢迎/登录/工作台之间切换
     setCentralWidget(pages_);
-    buildWelcome(); buildPassengerLogin(); buildRegister(); buildAdminLogin();
-    buildPassengerPage(); buildAdminPage(); pages_->setCurrentWidget(welcomePage_);
+    buildWelcome(); buildPassengerLogin(); buildRegister(); buildAdminLogin(); // 欢迎页 + 三种登录/注册页
+    buildPassengerPage(); buildAdminPage(); // 乘客工作台 + 管理员工作台
+    pages_->setCurrentWidget(welcomePage_); // 初始显示欢迎页
 }
 
-//构建选择身份窗口
+// 构建欢迎页：提供“乘客端”“管理员端”两个入口
 void MainWindow::buildWelcome() {
-    welcomePage_ = new QWidget; 
-    auto* layout = new QVBoxLayout(welcomePage_); 
+    welcomePage_ = new QWidget;                          // 欢迎页容器
+    auto* layout = new QVBoxLayout(welcomePage_);        // 主纵向布局
     layout->setContentsMargins(70, 50, 70, 50);
-    auto* hero = new QWidget;
-    hero->setObjectName("topBar"); 
+    auto* hero = new QWidget;                            // 顶部标题横幅
+    hero->setObjectName("topBar");                       // 复用深色顶栏样式
     auto* heroLayout = new QVBoxLayout(hero);
-    auto* h = new QLabel(QStringLiteral("云途智能交通预约系统")); 
+    auto* h = new QLabel(QStringLiteral("云途智能交通预约系统")); // 主标题
     h->setStyleSheet("font-size:32px;font-weight:700;color:white;");
-    auto* s = new QLabel(QStringLiteral("S · A · B · E  |  安全、清晰、可演示的预约流程")); 
-    s->setStyleSheet("font-size:15px;color:#d7fbff;"); 
+    auto* s = new QLabel(QStringLiteral("S · A · B · E  |  安全、清晰、可演示的预约流程")); // 副标题
+    s->setStyleSheet("font-size:15px;color:#d7fbff;");
     heroLayout->addWidget(h);
-    heroLayout->addWidget(s); 
+    heroLayout->addWidget(s);
     layout->addWidget(hero);
-    layout->addSpacing(30); layout->addWidget(title(QStringLiteral("选择进入方式")));
-    auto* cards = new QHBoxLayout; 
-    auto* passenger = card(); 
-    auto* pLayout = new QVBoxLayout(passenger); 
+    layout->addSpacing(30);
+    layout->addWidget(title(QStringLiteral("选择进入方式")));
+    auto* cards = new QHBoxLayout;                       // 两张入口卡片并排
+    auto* passenger = card();                            // 乘客端卡片
+    auto* pLayout = new QVBoxLayout(passenger);
     pLayout->addWidget(new QLabel(QStringLiteral("乘客端")));
-    pLayout->addWidget(new QLabel(QStringLiteral("查询班次、选择座位、完成预约并管理订单"))); 
-    auto* pButton = button(QStringLiteral("进入乘客端"), true); 
-    pLayout->addWidget(pButton); cards->addWidget(passenger);
-    auto* admin = card(); 
-    auto* aLayout = new QVBoxLayout(admin); 
-    aLayout->addWidget(new QLabel(QStringLiteral("管理员端"))); 
+    pLayout->addWidget(new QLabel(QStringLiteral("查询班次、选择座位、完成预约并管理订单")));
+    auto* pButton = button(QStringLiteral("进入乘客端"), true); // 乘客端入口按钮
+    pLayout->addWidget(pButton);
+    cards->addWidget(passenger);
+    auto* admin = card();                                // 管理员端卡片
+    auto* aLayout = new QVBoxLayout(admin);
+    aLayout->addWidget(new QLabel(QStringLiteral("管理员端")));
     aLayout->addWidget(new QLabel(QStringLiteral("维护班次、订单、乘客账户和营收统计")));
-    auto* aButton = button(QStringLiteral("进入管理员端"), true); 
+    auto* aButton = button(QStringLiteral("进入管理员端"), true); // 管理员端入口按钮
     aLayout->addWidget(aButton);
-    cards->addWidget(admin); layout->addLayout(cards); layout->addStretch();
+    cards->addWidget(admin);
+    layout->addLayout(cards);
+    layout->addStretch();
+    // 点击入口按钮跳转到对应登录页
     connect(pButton, &QPushButton::clicked, this, [this]{ pages_->setCurrentWidget(passengerLoginPage_); });
     connect(aButton, &QPushButton::clicked, this, [this]{ pages_->setCurrentWidget(adminLoginPage_); });
     pages_->addWidget(welcomePage_);
 }
 
-//构建乘客登录/注册窗口
+// 构建乘客登录页：手机号 + 密码登录，带连续错误次数限制
 void MainWindow::buildPassengerLogin() {
-    passengerLoginPage_ = new QWidget; auto* outer = new QVBoxLayout(passengerLoginPage_); outer->setContentsMargins(260, 90, 260, 90); outer->addWidget(title(QStringLiteral("乘客登录")));
-    auto* box = card(); auto* form = new QFormLayout(box); passengerPhone_=new QLineEdit; passengerPhone_->setPlaceholderText(QStringLiteral("11 位手机号")); passengerPassword_=new QLineEdit; passengerPassword_->setEchoMode(QLineEdit::Password); form->addRow(QStringLiteral("手机号"), passengerPhone_); form->addRow(QStringLiteral("密码"), passengerPassword_);
-    auto* login=button(QStringLiteral("登录"),true); auto* reg=button(QStringLiteral("注册新账户")); auto* back=button(QStringLiteral("返回")); form->addRow(login); form->addRow(reg); form->addRow(back); outer->addWidget(box); outer->addStretch();
-    connect(login,&QPushButton::clicked,this,[this]{ static int attempts=0; const auto phone=passengerPhone_->text().trimmed().toStdString(); const auto* user=store_.passengerLogin(phone,passengerPassword_->text().toStdString()); if(!user){++attempts;showError(QStringLiteral("手机号、密码错误或账户已停用，还可尝试 %1 次。").arg(qMax(0,transit::kMaxLoginAttempts-attempts)));if(attempts>=transit::kMaxLoginAttempts){attempts=0;pages_->setCurrentWidget(welcomePage_);}return;} attempts=0; currentPhone_=passengerPhone_->text().trimmed(); pages_->setCurrentWidget(passengerPage_); refreshBusList(); refreshPassengerOrders(); });
-    connect(reg,&QPushButton::clicked,this,[this]{ pages_->setCurrentWidget(registerPage_); });
-    connect(back,&QPushButton::clicked,this,[this]{ pages_->setCurrentWidget(welcomePage_); }); pages_->addWidget(passengerLoginPage_);
+    passengerLoginPage_ = new QWidget;                   // 登录页容器
+    auto* outer = new QVBoxLayout(passengerLoginPage_);
+    outer->setContentsMargins(260, 90, 260, 90);
+    outer->addWidget(title(QStringLiteral("乘客登录")));
+    auto* box = card();                                  // 表单卡片
+    auto* form = new QFormLayout(box);
+    passengerPhone_ = new QLineEdit;                     // 手机号输入框
+    passengerPhone_->setPlaceholderText(QStringLiteral("11 位手机号"));
+    passengerPassword_ = new QLineEdit;                  // 密码输入框
+    passengerPassword_->setEchoMode(QLineEdit::Password); // 密码掩码显示
+    form->addRow(QStringLiteral("手机号"), passengerPhone_);
+    form->addRow(QStringLiteral("密码"), passengerPassword_);
+    auto* login = button(QStringLiteral("登录"), true);  // 登录按钮
+    auto* reg = button(QStringLiteral("注册新账户"));    // 去注册页按钮
+    auto* back = button(QStringLiteral("返回"));         // 返回欢迎页按钮
+    form->addRow(login);
+    form->addRow(reg);
+    form->addRow(back);
+    outer->addWidget(box);
+    outer->addStretch();
+    // 登录：校验成功进入乘客工作台；失败累计次数，超限退回欢迎页
+    connect(login, &QPushButton::clicked, this, [this] {
+        static int attempts = 0;                         // 连续登录失败次数
+        const auto phone = passengerPhone_->text().trimmed().toStdString();
+        const auto* user = store_.passengerLogin(phone, passengerPassword_->text().toStdString());
+        if (!user) {
+            ++attempts;
+            showError(QStringLiteral("手机号、密码错误或账户已停用，还可尝试 %1 次。")
+                          .arg(qMax(0, transit::kMaxLoginAttempts - attempts)));
+            if (attempts >= transit::kMaxLoginAttempts) { // 达到上限：重置并退回欢迎页
+                attempts = 0;
+                pages_->setCurrentWidget(welcomePage_);
+            }
+            return;
+        }
+        attempts = 0;
+        currentPhone_ = passengerPhone_->text().trimmed(); // 记录当前登录乘客手机号
+        pages_->setCurrentWidget(passengerPage_);
+        refreshBusList();
+        refreshPassengerOrders();
+    });
+    connect(reg, &QPushButton::clicked, this, [this]{ pages_->setCurrentWidget(registerPage_); });
+    connect(back, &QPushButton::clicked, this, [this]{ pages_->setCurrentWidget(welcomePage_); });
+    pages_->addWidget(passengerLoginPage_);
 }
 
-//乘客注册
+// 构建乘客注册页：手机号 + 密码 + 姓名，注册成功后返回登录页
 void MainWindow::buildRegister() {
-    registerPage_=new QWidget; 
-    auto* outer=new QVBoxLayout(registerPage_); 
-    outer->setContentsMargins(260,70,260,70); 
-    outer->addWidget(title(QStringLiteral("乘客注册"))); 
-    auto* box=card(); 
-    auto* form=new QFormLayout(box);
-    registerPhone_=new QLineEdit; 
-    registerPassword_=new QLineEdit;
-    registerName_=new QLineEdit; 
-    registerPassword_->setEchoMode(QLineEdit::Password); 
-    form->addRow(QStringLiteral("手机号"),registerPhone_);
-    form->addRow(QStringLiteral("密码"),registerPassword_);
-    form->addRow(QStringLiteral("姓名"),registerName_);
-    auto* submit=button(QStringLiteral("注册并返回登录"),true);
-    auto* back=button(QStringLiteral("返回"));
-    form->addRow(submit);form->addRow(back);
-    outer->addWidget(box);outer->addStretch();
-
-    connect(submit,&QPushButton::clicked,this,[this]{std::string error;
-    if(!store_.registerPassenger(registerPhone_->text().trimmed().toStdString(),registerPassword_->text().toStdString(),registerName_->text().trimmed().toUtf8().toStdString(),error)){
-        showError(errorText(error));
-        return;
-    }
-    showInfo(QStringLiteral("注册成功，请使用手机号登录。"));
-    pages_->setCurrentWidget(passengerLoginPage_);});
-    connect(back,&QPushButton::clicked,this,[this]{pages_->setCurrentWidget(passengerLoginPage_);});
+    registerPage_ = new QWidget;                         // 注册页容器
+    auto* outer = new QVBoxLayout(registerPage_);
+    outer->setContentsMargins(260, 70, 260, 70);
+    outer->addWidget(title(QStringLiteral("乘客注册")));
+    auto* box = card();                                  // 表单卡片
+    auto* form = new QFormLayout(box);
+    registerPhone_ = new QLineEdit;                      // 手机号输入框
+    registerPassword_ = new QLineEdit;                   // 密码输入框
+    registerName_ = new QLineEdit;                       // 姓名输入框
+    registerPassword_->setEchoMode(QLineEdit::Password); // 密码掩码显示
+    form->addRow(QStringLiteral("手机号"), registerPhone_);
+    form->addRow(QStringLiteral("密码"), registerPassword_);
+    form->addRow(QStringLiteral("姓名"), registerName_);
+    auto* submit = button(QStringLiteral("注册并返回登录"), true); // 注册按钮
+    auto* back = button(QStringLiteral("返回"));         // 返回登录页按钮
+    form->addRow(submit);
+    form->addRow(back);
+    outer->addWidget(box);
+    outer->addStretch();
+    // 注册：业务校验失败弹错，成功则返回登录页
+    connect(submit, &QPushButton::clicked, this, [this] {
+        std::string error;
+        if (!store_.registerPassenger(registerPhone_->text().trimmed().toStdString(),
+                                      registerPassword_->text().toStdString(),
+                                      registerName_->text().trimmed().toUtf8().toStdString(),
+                                      error)) {
+            showError(errorText(error));
+            return;
+        }
+        showInfo(QStringLiteral("注册成功，请使用手机号登录。"));
+        pages_->setCurrentWidget(passengerLoginPage_);
+    });
+    connect(back, &QPushButton::clicked, this, [this]{ pages_->setCurrentWidget(passengerLoginPage_); });
     pages_->addWidget(registerPage_);
 }
 
 void MainWindow::buildAdminLogin() {
-    adminLoginPage_=new QWidget; 
+    adminLoginPage_=new QWidget;
     auto* outer=new QVBoxLayout(adminLoginPage_);
     outer->setContentsMargins(260,90,260,90);
     outer->addWidget(title(QStringLiteral("管理员登录")));
@@ -219,61 +284,68 @@ void MainWindow::buildAdminLogin() {
     form->addRow(back);
     outer->addWidget(box);
     outer->addStretch();
-    connect(login,&QPushButton::clicked,this,[this]{static int attempts=0;const auto* admin=store_.adminLogin(adminAccount_->text().trimmed().toStdString(),adminPassword_->text().toStdString());if(!admin){++attempts;showError(QStringLiteral("登录失败，还可尝试 %1 次。" ).arg(qMax(0,transit::kMaxLoginAttempts-attempts)));if(attempts>=transit::kMaxLoginAttempts)pages_->setCurrentWidget(welcomePage_);return;}attempts=0;currentAdmin_=adminAccount_->text().trimmed();pages_->setCurrentWidget(adminPage_);resetBusDateToLatest();refreshOrderTable();refreshAccountTable();refreshRevenue();});
+    connect(login,&QPushButton::clicked,this,[this]{static int attempts=0;const auto* admin=store_.adminLogin(adminAccount_->text().trimmed().toStdString(),adminPassword_->text().toStdString());if(!admin){++attempts;showError(QStringLiteral("登录失败，还可尝试 %1 次。" ).arg(qMax(0,transit::kMaxLoginAttempts-attempts)));if(attempts>=transit::kMaxLoginAttempts)pages_->setCurrentWidget(welcomePage_);return;}attempts=0;currentAdmin_=adminAccount_->text().trimmed();pages_->setCurrentWidget(adminPage_);resetBusDateToLatest();resetRevenueDateToLatest();refreshOrderTable();refreshAccountTable();refreshRevenue();});
     connect(back,&QPushButton::clicked,this,[this]{pages_->setCurrentWidget(welcomePage_);});pages_->addWidget(adminLoginPage_);
 }
 
-//构建乘客工作台界面 包括查询，选位，购票，查看“我的车票”，退票
+// 构建乘客工作台：包含“路线与座位”（查询/选座/购票）和“我的订单”（查看/退票）两个子页
 void MainWindow::buildPassengerPage() {
-    passengerPage_=new QWidget;
-    auto* outer=new QVBoxLayout(passengerPage_);
-    auto* top=new QWidget;
-    top->setObjectName("topBar");
-    auto* topLayout=new QHBoxLayout(top);
-    auto* label=new QLabel(QStringLiteral("乘客工作台"));
+    passengerPage_ = new QWidget;                        // 乘客工作台整页容器
+    auto* outer = new QVBoxLayout(passengerPage_);
+    auto* top = new QWidget;                             
+    top->setObjectName("topBar");                        
+    auto* topLayout = new QHBoxLayout(top);
+    auto* label = new QLabel(QStringLiteral("乘客工作台")); 
     label->setStyleSheet("color:white;font-size:20px;font-weight:700;");
     topLayout->addWidget(label);
-    clockLabel_=new QLabel;clockLabel_->setStyleSheet("color:white;font-size:15px;");
-    topLayout->addStretch();topLayout->addWidget(clockLabel_);
-    auto* logout=button(QStringLiteral("退出登录"));
+    clockLabel_ = new QLabel;                           
+    clockLabel_->setStyleSheet("color:white;font-size:15px;");
+    topLayout->addStretch();
+    topLayout->addWidget(clockLabel_);
+    auto* logout = button(QStringLiteral("退出登录"));   // 退出登录按钮
     topLayout->addWidget(logout);
     outer->addWidget(top);
 
-    auto* body=new QHBoxLayout;
-    auto* nav=card();
-    auto* navLayout=new QVBoxLayout(nav);
-    auto* queryNav=button(QStringLiteral("路线与座位"),true);
-    auto* orderNav=button(QStringLiteral("我的订单"));
+    auto* body = new QHBoxLayout;                        // 主体：左侧导航 + 右侧内容
+    auto* nav = card();                                 
+    auto* navLayout = new QVBoxLayout(nav);
+    auto* queryNav = button(QStringLiteral("路线与座位"), true); // 查询选座
+    auto* orderNav = button(QStringLiteral("我的订单"));  //我的订单
     navLayout->addWidget(queryNav);
     navLayout->addWidget(orderNav);
     navLayout->addStretch();
     body->addWidget(nav);
-    auto* content=new QStackedWidget;
-    body->addWidget(content,1);
+    auto* content = new QStackedWidget;                   // 右侧内容栈：0=查询选座，1=我的订单
+    body->addWidget(content, 1);
     outer->addLayout(body);
-    
-    auto* query=new QWidget;
-    auto* ql=new QVBoxLayout(query);
+
+    // ---------- 子页 1：查询班次并选择座位 ----------
+    auto* query = new QWidget;
+    auto* ql = new QVBoxLayout(query);
     ql->addWidget(title(QStringLiteral("查询班次并选择座位")));
-    auto* filters=card();
-    auto* fl=new QHBoxLayout(filters);
-    direction_=new QComboBox;
-    direction_->addItems({QStringLiteral("S → E"),QStringLiteral("E → S")});
-    fromStop_=new QComboBox;toStop_=new QComboBox;
-    for(int i=0;i<transit::kStops;++i){
-        fromStop_->addItem(text(transit::stopName(i)),i);
-        toStop_->addItem(text(transit::stopName(i)),i);
+    auto* filters = card();                               
+    auto* fl = new QHBoxLayout(filters);
+    direction_ = new QComboBox;                           // 方向下拉框
+    direction_->addItems({QStringLiteral("S → E"), QStringLiteral("E → S")});
+    fromStop_ = new QComboBox;                            // 出发站下拉框
+    toStop_ = new QComboBox;                              // 到达站下拉框
+
+    for (int i = 0; i < transit::kStops; ++i) {           // 填入 4 个站点（数据值=站号）
+        fromStop_->addItem(text(transit::stopName(i)), i);
+        toStop_->addItem(text(transit::stopName(i)), i);
     }
-    fromStop_->setCurrentIndex(0);
-    toStop_->setCurrentIndex(3);
-    auto* refresh=button(QStringLiteral("查询"),true);
-    demoTime_=new QCheckBox(QStringLiteral("使用演示时间"));
+    fromStop_->setCurrentIndex(0);                        // 默认出发站 S
+    toStop_->setCurrentIndex(3);                          // 默认到达站 E
+    auto* refresh = button(QStringLiteral("查询"), true); 
+
+    demoTime_ = new QCheckBox(QStringLiteral("使用演示时间")); // 演示时间开关
     demoTime_->setChecked(false);
-    demoTimeEdit_=new QTimeEdit(QTime::currentTime());
+    demoTimeEdit_ = new QTimeEdit(QTime::currentTime());  // 演示时间选择框
     demoTimeEdit_->setDisplayFormat(QStringLiteral("HH:mm"));
     demoTimeEdit_->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
     demoTimeEdit_->setWrapping(true);
     demoTimeEdit_->setFixedWidth(96);
+
     fl->addWidget(new QLabel(QStringLiteral("方向")));
     fl->addWidget(direction_);
     fl->addWidget(new QLabel(QStringLiteral("出发站")));
@@ -284,65 +356,113 @@ void MainWindow::buildPassengerPage() {
     fl->addWidget(demoTimeEdit_);
     fl->addWidget(refresh);
     ql->addWidget(filters);
-    auto* split=new QHBoxLayout;
-    busList_=new QListWidget;
+
+    auto* split = new QHBoxLayout;                        // 下方左右分栏
+    busList_ = new QListWidget;                           // 班次列表
     busList_->setWordWrap(true);
     busList_->setSpacing(4);
     busList_->setStyleSheet("QListWidget::item { padding: 8px; }");
     busList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    split->addWidget(busList_,1);
-    auto* right=card();
-    auto* rl=new QVBoxLayout(right);
-    querySummary_=new QLabel(QStringLiteral("请选择班次"));
+    split->addWidget(busList_, 1);
+    auto* right = card();                                 // 右侧座位区卡片
+    auto* rl = new QVBoxLayout(right);
+    querySummary_ = new QLabel(QStringLiteral("请选择班次")); // 查询汇总文本
     rl->addWidget(querySummary_);
-    seatPanel_=new QWidget;
+    seatPanel_ = new QWidget;                             // 座位图面板（由 refreshSeatMap 动态刷新）
     seatPanel_->setMinimumHeight(360);
     rl->addWidget(seatPanel_);
-    bookButton_=button(QStringLiteral("确认预约"),true);
-    bookButton_->setEnabled(false);
+
+    bookButton_ = button(QStringLiteral("确认预约"), true); // 确认预约按钮
+    bookButton_->setEnabled(false);                        // 未选座位时禁用
     rl->addWidget(bookButton_);
-    split->addWidget(right,2);
+    split->addWidget(right, 2);
     ql->addLayout(split);
     content->addWidget(query);
-   
-    auto* orders=new QWidget;
-    auto* ol=new QVBoxLayout(orders);
+
+    // ---------- 子页 2：我的订单 ----------
+    auto* orders = new QWidget;
+    auto* ol = new QVBoxLayout(orders);
     ol->addWidget(title(QStringLiteral("我的订单")));
-    passengerOrders_=new QTableWidget;
+    passengerOrders_ = new QTableWidget;                   // 我的订单表格（只读）
     passengerOrders_->setColumnCount(8);
-    passengerOrders_->setHorizontalHeaderLabels({"订单号","日期","班次","路线","座位","票价","状态","操作"});
+    passengerOrders_->setHorizontalHeaderLabels({"订单号", "日期", "班次", "路线", "座位", "票价", "状态", "操作"});
     passengerOrders_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     passengerOrders_->horizontalHeader()->setStretchLastSection(true);
     ol->addWidget(passengerOrders_);
-    auto* cancel=button(QStringLiteral("取消选中订单"));
-    ol->addWidget(cancel);content->addWidget(orders);
-    
-    connect(queryNav,&QPushButton::clicked,this,[content]{content->setCurrentIndex(0);});
-    connect(orderNav,&QPushButton::clicked,this,[this,content]{content->setCurrentIndex(1);refreshPassengerOrders();});
-    connect(logout,&QPushButton::clicked,this,[this]{leaveSession();});
-    connect(refresh,&QPushButton::clicked,this,[this]{refreshBusList();});
-    connect(demoTime_,&QCheckBox::toggled,this,[this]{refreshBusList(true);});
-    connect(demoTimeEdit_,&QTimeEdit::timeChanged,this,[this]{
-        if(demoTime_&&demoTime_->isChecked())refreshBusList(true);
+    auto* cancel = button(QStringLiteral("取消选中订单")); // 退票按钮
+    ol->addWidget(cancel);
+    content->addWidget(orders);
+
+    // ---------- 信号绑定 ----------
+    connect(queryNav, &QPushButton::clicked, this, [content] { content->setCurrentIndex(0); }); // 切到查询选座页
+    connect(orderNav, &QPushButton::clicked, this, [this, content] { content->setCurrentIndex(1); refreshPassengerOrders(); }); // 切到订单页并刷新
+    connect(logout, &QPushButton::clicked, this, [this] { leaveSession(); }); // 退出登录
+    connect(refresh, &QPushButton::clicked, this, [this] { refreshBusList(); }); // 查询按钮触发刷新班次
+    connect(demoTime_, &QCheckBox::toggled, this, [this] { refreshBusList(true); }); // 切换演示时间开关时刷新
+    connect(demoTimeEdit_, &QTimeEdit::timeChanged, this, [this] {
+        if (demoTime_ && demoTime_->isChecked()) refreshBusList(true); // 勾选演示时间时才随其变化刷新
     });
-    connect(direction_,&QComboBox::currentIndexChanged,this,[this](int index){QSignalBlocker fromBlock(fromStop_),toBlock(toStop_);
-    if(index==0){
-        fromStop_->setCurrentIndex(0);
-        toStop_->setCurrentIndex(3);
-    }
-    else{
-        fromStop_->setCurrentIndex(3);
-        toStop_->setCurrentIndex(0);
-    }
-    selectedBusId_=0;
-    selectedRow_=-1;
-    selectedCol_=-1;refreshBusList();});
-    connect(fromStop_,&QComboBox::currentIndexChanged,this,[this]{selectedBusId_=0;selectedRow_=-1;selectedCol_=-1;refreshBusList();});connect(toStop_,&QComboBox::currentIndexChanged,this,[this]{selectedBusId_=0;selectedRow_=-1;selectedCol_=-1;refreshBusList();});connect(busList_,&QListWidget::currentRowChanged,this,[this]{if(busList_->currentItem()){selectedBusId_=busList_->currentItem()->data(Qt::UserRole).toInt();}else selectedBusId_=0;selectedRow_=-1;selectedCol_=-1;refreshSeatMap();});connect(bookButton_,&QPushButton::clicked,this,[this]{if(!selectedBusId_||selectedRow_<0){return;}transit::Ticket created;std::string error;if(!store_.book(selectedBusId_,currentPhone_.toStdString(),currentFrom(),currentTo(),selectedRow_,selectedCol_,effectiveNowMinutes(),created,error)){showError(errorText(error));return;}showInfo(QStringLiteral("预约成功，订单号：%1").arg(text(created.id)));refreshBusList();refreshPassengerOrders();});connect(cancel,&QPushButton::clicked,this,[this]{int row=passengerOrders_->currentRow();if(row<0)return;auto id=passengerOrders_->item(row,0)->text().toStdString();std::string error;if(!store_.cancelOrder(id,currentPhone_.toStdString(),false,error)){showError(errorText(error));return;}showInfo(QStringLiteral("订单已取消，座位已释放。"));refreshPassengerOrders();refreshBusList();});pages_->addWidget(passengerPage_);
+    connect(direction_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        QSignalBlocker fromBlock(fromStop_), toBlock(toStop_); // 屏蔽出发/到达站信号，避免重复刷新
+        if (index == 0) {           // 方向 S → E：默认 S 出发、E 到达
+            fromStop_->setCurrentIndex(0);
+            toStop_->setCurrentIndex(3);
+        } else {                    // 方向 E → S：默认 E 出发、S 到达
+            fromStop_->setCurrentIndex(3);
+            toStop_->setCurrentIndex(0);
+        }
+        selectedBusId_ = 0;         // 方向变化后清空已选班次和座位
+        selectedRow_ = -1;
+        selectedCol_ = -1;
+        refreshBusList();
+    });
+    connect(fromStop_, &QComboBox::currentIndexChanged, this, [this] { // 改出发站：清空选择并刷新
+        selectedBusId_ = 0; selectedRow_ = -1; selectedCol_ = -1; refreshBusList();
+    });
+    connect(toStop_, &QComboBox::currentIndexChanged, this, [this] {   // 改到达站：清空选择并刷新
+        selectedBusId_ = 0; selectedRow_ = -1; selectedCol_ = -1; refreshBusList();
+    });
+    connect(busList_, &QListWidget::currentRowChanged, this, [this] {   // 选班次：记录班次号并刷新座位图
+        if (busList_->currentItem()) selectedBusId_ = busList_->currentItem()->data(Qt::UserRole).toInt();
+        else selectedBusId_ = 0;
+        selectedRow_ = -1;
+        selectedCol_ = -1;
+        refreshSeatMap();
+    });
+     // 确认预约
+    connect(bookButton_, &QPushButton::clicked, this, [this] {         
+        if (!selectedBusId_ || selectedRow_ < 0) return;                 // 未选班次或座位则不处理
+        transit::Ticket created;                                         // 下单成功后返回的新订单
+        std::string error;
+        if (!store_.book(selectedBusId_, currentPhone_.toStdString(), currentFrom(), currentTo(),
+                         selectedRow_, selectedCol_, effectiveNowMinutes(), created, error)) {
+            showError(errorText(error));
+            return;
+        }
+        showInfo(QStringLiteral("预约成功，订单号：%1").arg(text(created.id)));
+        refreshBusList();
+        refreshPassengerOrders();
+    });
+      // 退票：取消选中订单
+    connect(cancel, &QPushButton::clicked, this, [this] {             
+        int row = passengerOrders_->currentRow();
+        if (row < 0) return;
+        auto id = passengerOrders_->item(row, 0)->text().toStdString(); // 第 1 列是订单号
+        std::string error;
+        if (!store_.cancelOrder(id, currentPhone_.toStdString(), false, error)) {
+            showError(errorText(error));
+            return;
+        }
+        showInfo(QStringLiteral("订单已取消，座位已释放。"));
+        refreshPassengerOrders();
+        refreshBusList();
+    });
+    pages_->addWidget(passengerPage_);
 }
 
-// ==================== 管理员工作台（不包含登录页） ====================
+// ==================== 管理员工作台 ====================
 /*
- * 构建管理员工作台页面。
+ * 构建管理员工作台页面
  * 功能：搭建顶部栏和 5 个标签页（班次管理、订单管理、乘客管理、营收统计、数据维护），
  *       并为每个按钮绑定点击事件。业务规则（校验、保存）由 TransitStore 负责。
  * 参数：无。
@@ -370,13 +490,14 @@ void MainWindow::buildAdminPage() {
     auto* buses = new QWidget;                       // 班次管理页容器
     auto* bl = new QVBoxLayout(buses);               // 纵向布局：日期行 → 表格 → 按钮行
     busTable_ = new QTableWidget;                    // 班次表格（只读）
-    busTable_->setColumnCount(6);                    // 6 列
-    busTable_->setHorizontalHeaderLabels({"班次", "发车时间", "方向", "状态",
-                                          "有效订单", "区间可用座位"}); // 表头
+    busTable_->setColumnCount(6);                   
+    busTable_->setHorizontalHeaderLabels({"班次", "发车时间", "方向", "状态", "有效订单", "区间可用座位"}); 
     busTable_->setSelectionBehavior(QAbstractItemView::SelectRows);    // 点击单元格时整行选中
     busTable_->setSelectionMode(QAbstractItemView::SingleSelection);   // 一次只能选一个班次
     busTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);     // 只读：禁止双击修改单元格
     busTable_->horizontalHeader()->setStretchLastSection(true);        // 最后一列占满剩余宽度
+    // 点击表格空白处（没有班次的行）时取消当前选中的行
+    busTable_->viewport()->installEventFilter(this);
 
     // ---------- 订单日期筛选行 ----------
     // “有效订单”列统计的是所选日期内未取消的订单数，因此需要日期筛选框。
@@ -385,8 +506,8 @@ void MainWindow::buildAdminPage() {
         dr->addWidget(new QLabel(QStringLiteral("订单日期"))); // “订单日期”标签
         busDate_ = new QDateEdit(QDate::currentDate());        // 日期框，初值为今天
         busDate_->setCalendarPopup(true);            // 点击右侧箭头弹出日历
-        busDate_->setMinimumWidth(160);              // 最小宽度，保证 yyyy/MM/dd 完整显示
-        busDate_->setMaximumDate(QDate::currentDate()); // 上限为今天，不允许选未来日期
+        busDate_->setMinimumWidth(160);              
+        busDate_->setMaximumDate(QDate::currentDate()); // 上限为今天
         dr->addWidget(busDate_);                     // 日期框加入日期行
         dr->addStretch();                            // 让控件靠左对齐
         bl->addLayout(dr);                           // 日期行加入班次页
@@ -399,20 +520,20 @@ void MainWindow::buildAdminPage() {
 
     // ---------- 班次操作按钮行 ----------
     auto* bb = new QHBoxLayout;                      // 按钮行横向布局
-    auto* add = button("新增班次", true);            // “新增班次”主按钮
-    auto* edit = button("修改时间");                 // “修改时间”按钮
-    auto* dir = button("修改方向");                  // “修改方向”按钮
-    auto* toggle = button("启用/停运");              // “启用/停运”按钮
-    auto* del = button("删除班次");                  // “删除班次”按钮
+    auto* add = button("新增班次", true);            
+    auto* edit = button("修改时间");                
+    auto* dir = button("修改方向");                  
+    auto* toggle = button("启用/停运");              
+    auto* del = button("删除班次");                  
     for (auto* b : {add, edit, dir, toggle, del}) bb->addWidget(b); // 依次加入按钮行
     bl->addLayout(bb);                               // 按钮行加入页面
 
     // 新增班次：依次输入班次编号、发车小时、方向，业务校验由 TransitStore::addBus 完成
     connect(add, &QPushButton::clicked, this, [this] {
         bool ok = false;                             // 对话框是否点了“确定”
-        int id = QInputDialog::getInt(this, "新增班次", "班次编号", 7, 1, 999, 1, &ok); // 班次编号
+        int id = QInputDialog::getInt(this, "新增班次", "班次编号", 7, 1, 999, 1, &ok); 
         if (!ok) return;                             // 用户取消
-        int hour = QInputDialog::getInt(this, "新增班次", "发车小时", 9, 0, 23, 1, &ok); // 发车小时
+        int hour = QInputDialog::getInt(this, "新增班次", "发车小时", 9, 0, 23, 1, &ok); 
         if (!ok) return;
         QString dirText = QInputDialog::getItem(this, "新增班次", "方向",
                                                 QStringList{QStringLiteral("S → E"), QStringLiteral("E → S")},
@@ -482,13 +603,17 @@ void MainWindow::buildAdminPage() {
     orderFilter_->setPlaceholderText("按订单号、手机号或班次筛选"); // 输入提示
     filterRow->addWidget(orderFilter_);              // 输入框靠左
     auto* cancelOrder = button("取消订单");          // 管理员取消订单按钮
+    auto* restoreOrder = button("撤销取消");         // 管理员撤销取消按钮
     filterRow->addWidget(cancelOrder);               // 取消按钮靠右
+    filterRow->addWidget(restoreOrder);              // 撤销取消按钮紧随其后
     rl->addLayout(filterRow);                        // 筛选行加入页面
     orderTable_ = new QTableWidget;                  // 订单表格（只读）
     orderTable_->setColumnCount(9);                  // 9 列
     orderTable_->setHorizontalHeaderLabels({"订单号", "日期", "班次", "乘客", "手机号",
                                             "路线", "座位", "票价", "状态"}); // 表头
     orderTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);          // 只读，禁止直接改单元格
+    orderTable_->setSelectionBehavior(QAbstractItemView::SelectRows);         // 点击任意单元格选中整行
+    orderTable_->setSelectionMode(QAbstractItemView::SingleSelection);        // 一次只能选中一个订单
     orderTable_->horizontalHeader()->setStretchLastSection(true);             // 最后一列铺满
     rl->addWidget(orderTable_);                      // 表格加入页面
     // 筛选框内容变化时实时过滤订单列表
@@ -497,10 +622,35 @@ void MainWindow::buildAdminPage() {
     // 取消成功后同时刷新订单表和班次表（有效订单数可能变化）
     connect(cancelOrder, &QPushButton::clicked, this, [this] {
         int r = orderTable_->currentRow();           // 当前选中的行号
-        if (r < 0) return;
+        if (r < 0) {                                 // 没有选中任何订单时给出提示，而不是静默返回
+            showError("请先在表格中选中要取消的订单");
+            return;
+        }
+        const QTableWidgetItem* idItem = orderTable_->item(r, 0); // 第 1 列是订单号
+        if (!idItem) {                               // 防御：行数据缺失
+            showError("订单数据异常，请刷新后重试");
+            return;
+        }
         std::string e;                               // 失败原因
-        if (!store_.cancelOrder(orderTable_->item(r, 0)->text().toStdString(), // 第 1 列是订单号
+        if (!store_.cancelOrder(idItem->text().toStdString(),
                                  {}, true, e))       // phone 留空，true 表示管理员权限
+            showError(errorText(e));
+        else { refreshOrderTable(); refreshBusTable(); }
+    });
+    // 撤销取消：把选中的已取消订单恢复为有效，并重新占用座位
+    connect(restoreOrder, &QPushButton::clicked, this, [this] {
+        int r = orderTable_->currentRow();           // 当前选中的行号
+        if (r < 0) {                                 // 没有选中任何订单时给出提示
+            showError("请先在表格中选中要撤销取消的订单");
+            return;
+        }
+        const QTableWidgetItem* idItem = orderTable_->item(r, 0); // 第 1 列是订单号
+        if (!idItem) {                               // 防御：行数据缺失
+            showError("订单数据异常，请刷新后重试");
+            return;
+        }
+        std::string e;                               // 失败原因
+        if (!store_.restoreOrder(idItem->text().toStdString(), e))
             showError(errorText(e));
         else { refreshOrderTable(); refreshBusTable(); }
     });
@@ -584,13 +734,7 @@ void MainWindow::buildAdminPage() {
     revenueDate_ = new QDateEdit(QDate::currentDate()); // 统计日期框，初值今天
     revenueDate_->setCalendarPopup(true);            // 点击弹出日历
     revenueDate_->setMinimumWidth(160);              // 保证日期完整显示
-    {
-        // 日期上限 = 最新一条未取消订单的日期（没有订单时取今天），
-        // 默认也定位到该日期，避免打开页面就统计到一个没有订单的日期。
-        const QDate latest = latestActiveOrderDate(); // 最新有效订单日期
-        revenueDate_->setMaximumDate(latest.isValid() ? latest : QDate::currentDate());
-        if (latest.isValid()) revenueDate_->setDate(latest);
-    }
+    resetRevenueDateToLatest();                      // 上限今天，默认定位到最新未取消订单日期
     auto* query = button("统计所选日期", true);      // “统计所选日期”主按钮
     auto* all = button("统计全部");                  // “统计全部”按钮
     vr->addWidget(revenueDate_);                     // 日期框
@@ -647,8 +791,12 @@ void MainWindow::buildAdminPage() {
     pages_->addWidget(adminPage_);                   // 管理员工作台加入页面栈
 }
 
-int MainWindow::currentFrom() const { return fromStop_ ? fromStop_->currentData().toInt() : 0; }
-int MainWindow::currentTo() const { return toStop_ ? toStop_->currentData().toInt() : 3; }
+int MainWindow::currentFrom() const { 
+    return fromStop_ ? fromStop_->currentData().toInt() : 0; 
+}
+int MainWindow::currentTo() const { 
+    return toStop_ ? toStop_->currentData().toInt() : 3; 
+}
 
 int MainWindow::effectiveNowMinutes() const {
     if (demoTime_ && demoTime_->isChecked() && demoTimeEdit_) {
@@ -658,41 +806,43 @@ int MainWindow::effectiveNowMinutes() const {
     return transit::systemNowMinutes();
 }
 
+// 刷新班次列表：按方向/起终点筛选可预约班次，显示运行状态与可用座位数
 void MainWindow::refreshBusList(bool preserveSelection) {
     if (!busList_) return;
-    const int keepBus = preserveSelection ? selectedBusId_ : 0;
-    const int keepRow = preserveSelection ? selectedRow_ : -1;
-    const int keepCol = preserveSelection ? selectedCol_ : -1;
-    busList_->clear();
+    const int keepBus = preserveSelection ? selectedBusId_ : 0;   // 刷新后要保留的班次
+    const int keepRow = preserveSelection ? selectedRow_ : -1;    
+    const int keepCol = preserveSelection ? selectedCol_ : -1;   
+    busList_->clear();                                            // 清空旧列表
     selectedBusId_ = 0;
     selectedRow_ = selectedCol_ = -1;
 
-    const int direction = direction_->currentIndex();
-    const int from = currentFrom();
-    const int to = currentTo();
+    const int direction = direction_->currentIndex();            
+    const int from = currentFrom();                              
+    const int to = currentTo();                                 
     if (transit::stopPosition(direction, from) >= transit::stopPosition(direction, to)) {
-        querySummary_->setText(QStringLiteral("请选择正确的起点站和到达站"));
+        querySummary_->setText(QStringLiteral("请选择正确的起点站和到达站")); 
         refreshSeatMap();
         return;
     }
 
-    const int now = effectiveNowMinutes();
+    const int now = effectiveNowMinutes();                        // 当前时间
     for (const auto& bus : store_.buses()) {
-        if (!bus.enabled || bus.direction != direction) continue;
-        const int departure = bus.hour * 60;
-        const int finish = departure + transit::kSegments * transit::kSegmentMinutes;
-        const int boarding = store_.arrivalMinutes(bus, from);
-        int nextPosition = -1;
-        int remain = 0;
+        if (!bus.enabled || bus.direction != direction) continue; // 跳过停运或方向不符的班次
+        const int departure = bus.hour * 60;                      // 发车时刻
+        const int finish = departure + transit::kSegments * transit::kSegmentMinutes; // 终点到达时刻
+        const int boarding = store_.arrivalMinutes(bus, from);    // 班次到达上车点的时刻
+        int nextPosition = -1;                                    // 下一站位置
+        int remain = 0;                                           // 距下一站剩余分钟
         for (int position = 0; position < transit::kStops; ++position) {
             const int arrival = departure + position * transit::kSegmentMinutes;
-            if (arrival > now) {
+            if (arrival > now) {                                
                 nextPosition = position;
                 remain = arrival - now;
                 break;
             }
         }
-        QString status;
+
+        QString status;                                           // 运行状态文案
         if (now >= finish) {
             status = QStringLiteral("当日已结束");
         } else if (now >= boarding) {
@@ -710,31 +860,32 @@ void MainWindow::refreshBusList(bool preserveSelection) {
                          .arg(text(transit::stopName(transit::stopAt(direction, nextPosition))))
                          .arg(QString::fromStdString(transit::formatDuration(remain)));
         }
-        const bool canBook = now < boarding;
+
+        const bool canBook = now < boarding;                      // 当前是否还能预约
         const QString availability = canBook
             ? QStringLiteral("可预约座位 %1 / 15").arg(store_.availableSeats(bus, from, to))
             : QStringLiteral("暂不可预约 · 当前路线可用座位 %1 / 15").arg(store_.availableSeats(bus, from, to));
-        const QString label = QStringLiteral("班次 %1 · %2 · %3\n%4 · %5")
+        const QString label = QStringLiteral("班次 %1 · %2 · %3\n%4 · %5") // 列表项两行文字
                                   .arg(bus.id)
                                   .arg(QString::fromStdString(transit::formatClock(departure)))
                                   .arg(text(transit::directionName(direction)))
                                   .arg(status)
                                   .arg(availability);
         auto* item = new QListWidgetItem(label);
-        item->setData(Qt::UserRole, bus.id);
+        item->setData(Qt::UserRole, bus.id);                      // 把班次号存在数据里，选中时读取
         const int itemWidth = busList_->viewport()->width() > 0
                                   ? busList_->viewport()->width() - 24
                                   : 300;
         item->setSizeHint(QSize(itemWidth, 58));
         busList_->addItem(item);
     }
-    if (keepBus != 0) {
+    if (keepBus != 0) {                                           // 需要恢复之前的选中状态
         for (int row = 0; row < busList_->count(); ++row) {
             if (busList_->item(row)->data(Qt::UserRole).toInt() == keepBus) {
                 selectedBusId_ = keepBus;
                 selectedRow_ = keepRow;
                 selectedCol_ = keepCol;
-                QSignalBlocker blocker(busList_);
+                QSignalBlocker blocker(busList_);                 // 屏蔽信号，避免触发重复刷新
                 busList_->setCurrentRow(row);
                 break;
             }
@@ -746,28 +897,29 @@ void MainWindow::refreshBusList(bool preserveSelection) {
     refreshSeatMap();
 }
 
+// 刷新座位图：按所选班次和起终点，用按钮网格画出 5×4 座位状态并处理选中
 void MainWindow::refreshSeatMap() {
     if (!seatPanel_) return;
-    clearPanel(seatPanel_);
+    clearPanel(seatPanel_);                               // 先清空旧的座位按钮
     auto* grid = new QGridLayout(seatPanel_);
     grid->setSpacing(8);
-    if (!selectedBusId_) {
+    if (!selectedBusId_) {                                // 还没选班次
         grid->addWidget(new QLabel(QStringLiteral("请选择班次查看 5×4 座位图")), 0, 0);
         bookButton_->setEnabled(false);
         return;
     }
     const auto it = std::find_if(store_.buses().begin(), store_.buses().end(),
                                  [&](const transit::Bus& bus) { return bus.id == selectedBusId_; });
-    if (it == store_.buses().end()) {
+    if (it == store_.buses().end()) {                     // 班次不存在（可能已被删除）
         bookButton_->setEnabled(false);
         return;
     }
     const auto& bus = *it;
-    const int now = effectiveNowMinutes();
-    const int departure = bus.hour * 60;
-    const int boarding = store_.arrivalMinutes(bus, currentFrom());
-    const bool canBook = now < boarding;
-    QString bookingHint;
+    const int now = effectiveNowMinutes();                // 当前时间（分钟）
+    const int departure = bus.hour * 60;                  // 发车时刻
+    const int boarding = store_.arrivalMinutes(bus, currentFrom()); // 到达出发站时刻
+    const bool canBook = now < boarding;                  // 是否还能预约
+    QString bookingHint;                                  // 预约状态提示
     if (now < departure) {
         bookingHint = QStringLiteral("发车前可预约");
     } else if (canBook) {
@@ -775,7 +927,7 @@ void MainWindow::refreshSeatMap() {
     } else {
         bookingHint = QStringLiteral("已驶过起点站，不可预约");
     }
-    querySummary_->setText(QStringLiteral("班次 %1 · %2 → %3 · 票价 %4 元 · 可用座位 %5 · %6")
+    querySummary_->setText(QStringLiteral("班次 %1 · %2 → %3 · 票价 %4 元 · 可用座位 %5 · %6") // 顶部汇总信息
                                .arg(bus.id)
                                .arg(text(transit::stopName(currentFrom())))
                                .arg(text(transit::stopName(currentTo())))
@@ -785,31 +937,32 @@ void MainWindow::refreshSeatMap() {
                                .arg(bookingHint));
     grid->addWidget(new QLabel(canBook ? QStringLiteral("座位图 · 请选择一个空座位")
                                        : QStringLiteral("座位图 · 班次已驶过起点站，当前不可预约")), 0, 0, 1, 4);
-    for (int col = 0; col < transit::kCols; ++col)
+
+    for (int col = 0; col < transit::kCols; ++col)        // 列标题
         grid->addWidget(new QLabel(QStringLiteral("%1 列").arg(col + 1)), 1, col + 1);
     for (int row = 0; row < transit::kRows; ++row) {
-        grid->addWidget(new QLabel(QStringLiteral("第 %1 排").arg(row + 1)), row + 2, 0);
+        grid->addWidget(new QLabel(QStringLiteral("第 %1 排").arg(row + 1)), row + 2, 0); // 行标题
         for (int col = 0; col < transit::kCols; ++col) {
             auto* seat = new QPushButton(QStringLiteral("%1-%2").arg(row + 1).arg(col + 1));
-            const int status = store_.seatStatus(bus, currentFrom(), currentTo(), row, col);
-            if (status == transit::SEAT_NONE) {
+            const int status = store_.seatStatus(bus, currentFrom(), currentTo(), row, col); // 座位状态
+            if (status == transit::SEAT_NONE) {           // 无座
                 seat->setEnabled(false);
                 seat->setText(QStringLiteral("无座"));
                 seat->setStyleSheet("background:#e4e9ed;color:#9aa8af;");
-            } else if (status == transit::SEAT_BOOKED) {
+            } else if (status == transit::SEAT_BOOKED) {  // 已订
                 seat->setEnabled(false);
                 seat->setText(QStringLiteral("已订"));
                 seat->setStyleSheet("background:#ffd7b0;color:#9a5b13;");
-            } else if (!canBook) {
+            } else if (!canBook) {                        // 已驶过起点站：不可预约
                 seat->setEnabled(false);
                 seat->setText(QStringLiteral("不可约"));
                 seat->setStyleSheet("background:#e4e9ed;color:#9aa8af;");
-            } else if (selectedRow_ == row && selectedCol_ == col) {
+            } else if (selectedRow_ == row && selectedCol_ == col) { // 当前选中的座位：蓝色高亮
                 seat->setStyleSheet("background:#2f80ed;color:white;");
-            } else {
+            } else {                                      // 空闲可选的座位：绿色可点击
                 seat->setStyleSheet("background:#d5f3ef;color:#087e7e;");
                 connect(seat, &QPushButton::clicked, this, [this, row, col] {
-                    selectedRow_ = row;
+                    selectedRow_ = row;                   // 重画
                     selectedCol_ = col;
                     refreshSeatMap();
                 });
@@ -817,66 +970,66 @@ void MainWindow::refreshSeatMap() {
             grid->addWidget(seat, row + 2, col + 1);
         }
     }
-    bookButton_->setEnabled(canBook && selectedRow_ >= 0);
+    bookButton_->setEnabled(canBook && selectedRow_ >= 0); // 可选且已选座位时才允许预约
 }
 
+// 每秒刷新顶栏时钟；跨日期或分钟变化时刷新数据与班次列表
 void MainWindow::refreshClockAndAvailability() {
-    const QDateTime now = QDateTime::currentDateTime();
+    const QDateTime now = QDateTime::currentDateTime();   // 系统当前时间
     QString clockText = QStringLiteral("系统时间：%1")
                             .arg(now.toString("yyyy-MM-dd HH:mm:ss"));
-    if (demoTime_ && demoTime_->isChecked() && demoTimeEdit_) {
+    if (demoTime_ && demoTime_->isChecked() && demoTimeEdit_) { // 勾选演示时间时追加显示
         clockText += QStringLiteral(" · 演示时间：%1")
                          .arg(demoTimeEdit_->time().toString("HH:mm"));
     }
     if (clockLabel_) clockLabel_->setText(clockText);
 
-    const QString today = QString::fromStdString(transit::systemDateText());
-    if (today != activeDate_) {
+    const QString today = QString::fromStdString(transit::systemDateText()); // 系统今天的日期
+    if (today != activeDate_) {                           // 重建今天的座位数据
         std::string error;
         if (!store_.refreshForToday(error)) showError(errorText(error));
         activeDate_ = today;
         lastNowMinutes_ = -1;
-        if (!currentPhone_.isEmpty()) {
+        if (!currentPhone_.isEmpty()) {                   // 已登录乘客才刷新界面
             refreshPassengerOrders();
             refreshBusList(true);
         }
     }
-
-    // 勾选“使用演示时间”时，分钟数由用户指定，不再跟着系统分钟自动刷新；
-    // 但日期仍以系统日期为准，日期变化时上面已经强制刷新座位。
-    const int nowMinutes = effectiveNowMinutes();
-    if (nowMinutes != lastNowMinutes_) {
+    // 勾选“使用演示时间”时，分钟数由用户指定，但日期仍以系统日期为准，
+     const int nowMinutes = effectiveNowMinutes();         
+    if (nowMinutes != lastNowMinutes_) {                  // 分钟变化刷新班次
         lastNowMinutes_ = nowMinutes;
         if (!currentPhone_.isEmpty()) refreshBusList(true);
     }
 }
 
+// 刷新“我的订单”表格：只显示当前登录乘客的订单，并标注状态与是否可取消
 void MainWindow::refreshPassengerOrders() {
     if (!passengerOrders_) return;
-    passengerOrders_->setRowCount(0);
-    const std::string today = transit::systemDateText();
+    passengerOrders_->setRowCount(0);                     // 清空旧数据
+    const std::string today = transit::systemDateText();  // 系统今天的日期
     for (const auto& ticket : store_.orders()) {
-        if (ticket.phone != currentPhone_.toStdString()) continue;
+        if (ticket.phone != currentPhone_.toStdString()) continue; 
         const int row = passengerOrders_->rowCount();
         passengerOrders_->insertRow(row);
-        passengerOrders_->setItem(row, 0, new QTableWidgetItem(text(ticket.id)));
-        passengerOrders_->setItem(row, 1, new QTableWidgetItem(text(ticket.date)));
-        passengerOrders_->setItem(row, 2, new QTableWidgetItem(QString::number(ticket.busId)));
-        passengerOrders_->setItem(row, 3, new QTableWidgetItem(QStringLiteral("%1 → %2")
+        passengerOrders_->setItem(row, 0, new QTableWidgetItem(text(ticket.id)));   // 订单号
+        passengerOrders_->setItem(row, 1, new QTableWidgetItem(text(ticket.date))); // 下单日期
+        passengerOrders_->setItem(row, 2, new QTableWidgetItem(QString::number(ticket.busId))); // 班次
+        passengerOrders_->setItem(row, 3, new QTableWidgetItem(QStringLiteral("%1 → %2") // 路线
             .arg(text(transit::stopName(ticket.from))).arg(text(transit::stopName(ticket.to)))));
-        passengerOrders_->setItem(row, 4, new QTableWidgetItem(QStringLiteral("%1-%2").arg(ticket.row + 1).arg(ticket.col + 1)));
-        passengerOrders_->setItem(row, 5, new QTableWidgetItem(QString::number(ticket.price) + QStringLiteral(" 元")));
-        const bool todayActive = ticket.status == transit::ORDER_ACTIVE && ticket.date == today;
+        passengerOrders_->setItem(row, 4, new QTableWidgetItem(QStringLiteral("%1-%2").arg(ticket.row + 1).arg(ticket.col + 1))); // 座位
+        passengerOrders_->setItem(row, 5, new QTableWidgetItem(QString::number(ticket.price) + QStringLiteral(" 元"))); // 票价
+        const bool todayActive = ticket.status == transit::ORDER_ACTIVE && ticket.date == today; // 今天且未取消
         const QString status = ticket.status == transit::ORDER_CANCELLED
             ? QStringLiteral("已取消") : (todayActive ? QStringLiteral("有效") : QStringLiteral("已结束"));
-        passengerOrders_->setItem(row, 6, new QTableWidgetItem(status));
-        passengerOrders_->setItem(row, 7, new QTableWidgetItem(todayActive ? QStringLiteral("取消") : QStringLiteral("—")));
+        passengerOrders_->setItem(row, 6, new QTableWidgetItem(status));              // 状态
+        passengerOrders_->setItem(row, 7, new QTableWidgetItem(todayActive ? QStringLiteral("取消") : QStringLiteral("—"))); // 操作列
     }
 }
 /*
  * 刷新班次管理表格。
  * 功能：按 busDate_ 所选日期，为每个班次填入编号、发车时间、方向、状态、
- *       当日未取消订单数和今天全程可用座位数。
+ *       当日未取消订单数和所选日期全程可用座位数。
  * 参数：无。
  * 返回值：无。
  */
@@ -899,8 +1052,9 @@ void MainWindow::refreshBusTable() {
         // 第 5 列：所选日期内该班次未取消的订单数
         busTable_->setItem(r, 4, new QTableWidgetItem(
             QString::number(store_.ticketsForBusOnDate(b.id, dateText.toStdString()))));
-        // 第 6 列：今天全程仍空余的座位数（由座位占用情况计算，不可手工修改）
-        busTable_->setItem(r, 5, new QTableWidgetItem(QString::number(store_.wholeRouteFree(b))));
+        // 第 6 列：所选日期内全程仍空余的座位数（按该日期未取消订单占用情况计算，不可手工修改）
+        busTable_->setItem(r, 5, new QTableWidgetItem(
+            QString::number(store_.wholeRouteFree(b, dateText.toStdString()))));
     }
 }
 
@@ -921,10 +1075,24 @@ void MainWindow::resetBusDateToLatest() {
     busDate_->blockSignals(false);
     refreshBusTable();                               // 按最终日期刷新表格
 }
+
+/*
+ * 把营收统计的“统计日期”重置为最新未取消订单日期，并把上限设为今天。
+ * 功能：与班次管理日期框保持一致；没有订单时用今天。
+ * 参数：无。
+ * 返回值：无（刷新由调用方 refreshRevenue 完成）。
+ */
+void MainWindow::resetRevenueDateToLatest() {
+    if (!revenueDate_) return;                          // 控件尚未创建
+    revenueDate_->setMaximumDate(QDate::currentDate()); // 上限今天，不允许选未来日期
+    const QDate latest = latestActiveOrderDate();       // 最新未取消订单日期
+    if (latest.isValid()) revenueDate_->setDate(latest); // 有订单则定位到最新日期
+}
 /*
  * 刷新订单管理表格。
  * 功能：按 orderFilter_ 的关键字过滤订单，然后逐行显示订单号、日期、班次、乘客、
  *       手机号、路线、座位、票价和状态。
+ * 筛选规则：1~2 位纯数字按班次号精确匹配；其他关键字在订单号和手机号中做包含匹配。
  * 状态规则：已取消；有效（今天且未取消）；已结束（历史日期的未取消订单）。
  * 参数：无。
  * 返回值：无。
@@ -934,12 +1102,21 @@ void MainWindow::refreshOrderTable() {
     orderTable_->setRowCount(0);                     // 清空旧数据
     // 筛选关键字，去掉首尾空格；没有输入框时为空
     const QString filter = orderFilter_ ? orderFilter_->text().trimmed() : QString();
+    // 纯数字且不超过两位的关键字视为班次号（如 "2"、"16"），只按班次精确匹配；
+    // 否则会误中订单号里的日期/手机号里的数字（如 "2" 命中所有 YT2026...）
+    const bool busNumberQuery = !filter.isEmpty() && filter.size() <= 2 &&
+        std::all_of(filter.begin(), filter.end(),
+                    [](QChar ch) { return ch.isDigit(); });
     const std::string today = transit::systemDateText(); // 系统今天的日期
     for (const auto& ticket : store_.orders()) {     // ticket：当前遍历到的订单
-        // 用于匹配的文本：订单号 + 手机号 + 班次号
-        const QString line = text(ticket.id) + text(ticket.phone) + QString::number(ticket.busId);
-        // 有关键字且匹配不上时跳过该订单（忽略大小写）
-        if (!filter.isEmpty() && !line.contains(filter, Qt::CaseInsensitive)) continue;
+        // 三个字段分别匹配：订单号、手机号做包含匹配；班次号做精确匹配
+        const bool match = filter.isEmpty()
+            || (busNumberQuery
+                    ? QString::number(ticket.busId) == filter
+                    : (text(ticket.id).contains(filter, Qt::CaseInsensitive) ||
+                       text(ticket.phone).contains(filter, Qt::CaseInsensitive) ||
+                       QString::number(ticket.busId) == filter));
+        if (!match) continue;                        // 匹配不上时跳过该订单
         const int row = orderTable_->rowCount();     // 新行号
         orderTable_->insertRow(row);                 // 插入一行
         // 是否为“今天且未取消”的有效订单
@@ -1010,10 +1187,8 @@ QDate MainWindow::latestActiveOrderDate() const {
 void MainWindow::refreshRevenue() {
     if (!revenueSummary_) return;                    // 页面尚未构建
     {
-        // 日期上限：不允许选择最新未取消订单日期之后的日期；
-        // 一条订单都没有时上限取今天。
-        const QDate latest = latestActiveOrderDate(); // 最新未取消订单日期
-        revenueDate_->setMaximumDate(latest.isValid() ? latest : QDate::currentDate());
+        // 日期上限：今天（与班次管理一致，不允许选择未来日期）
+        revenueDate_->setMaximumDate(QDate::currentDate());
     }
     // “all”属性由“统计全部”按钮置 true、“统计所选日期”按钮置 false
     const bool all = revenueDate_->property("all").toBool();

@@ -119,6 +119,12 @@ public:
     int seatStatus(const Bus& bus, int from, int to, int row, int col) const;
     int availableSeats(const Bus& bus, int from, int to) const;
     int wholeRouteFree(const Bus& bus) const;
+    /*
+     * 统计某班次在指定日期的全程可用座位数（班次管理表格第 6 列）。
+     * 参数：bus - 班次；date - 日期，格式 yyyy-MM-dd。
+     * 返回值：只考虑该日期未取消订单的占用后，全程（起点到终点）仍空闲的座位数。
+     */
+    int wholeRouteFree(const Bus& bus, const std::string& date) const;
 
     /*
      * 计算班次到达某个站的时刻（从 0 点开始的分钟数）。
@@ -134,9 +140,9 @@ public:
      */
     int activeTicketsForPhone(const std::string& phone) const;
     /*
-     * 统计某班次今天的有效订单数。
+     * 统计某班次未取消的订单数（不分日期，历史未取消订单也算）。
      * 参数：busId - 班次编号。
-     * 返回值：今天且未取消的订单数量（停运、改方向、删除班次前都会检查）。
+     * 返回值：未取消的订单数量（停运、改方向、改发车时间、删除班次前都会检查）。
      */
     int activeTicketsForBus(int busId) const;
     /*
@@ -160,6 +166,14 @@ public:
                      bool adminOverride, std::string& error);
 
     /*
+     * 撤销取消订单（仅管理员）：把已取消订单恢复为有效，并重新占用其座位。
+     * 参数：orderId - 订单号；error - 失败原因输出。
+     * 返回值：成功返回 true；订单不存在、未被取消、座位已被其他订单占用
+     *         或乘客今日有效票已达上限时返回 false。
+     */
+    bool restoreOrder(const std::string& orderId, std::string& error);
+
+    /*
      * 新增班次。
      * 参数：id - 班次编号；hour - 发车小时（0-23）；direction - 方向（0: S->E，1: E->S）；
      *       error - 失败原因输出。
@@ -169,19 +183,19 @@ public:
     /*
      * 修改班次发车时间。
      * 参数：id - 班次编号；hour - 新的发车小时（0-23）；error - 失败原因输出。
-     * 返回值：班次存在且小时合法时返回 true，否则 false。
+     * 返回值：班次存在、小时合法且无未取消订单时返回 true，否则 false。
      */
     bool updateBus(int id, int hour, std::string& error);
     /*
      * 修改班次行驶方向。
      * 参数：id - 班次编号；direction - 新方向（0: S->E，1: E->S）；error - 失败原因输出。
-     * 返回值：成功返回 true；班次不存在、方向非法或今天有有效订单时返回 false。
+     * 返回值：成功返回 true；班次不存在、方向非法或存在未取消订单时返回 false。
      */
     bool updateBusDirection(int id, int direction, std::string& error);
     /*
      * 启用/停运切换。
      * 参数：id - 班次编号；error - 失败原因输出。
-     * 返回值：成功返回 true；班次不存在或运行中且有今天的有效订单时返回 false。
+     * 返回值：成功返回 true；班次不存在或运行中且存在未取消订单时返回 false。
      */
     bool toggleBus(int id, std::string& error);
     /*

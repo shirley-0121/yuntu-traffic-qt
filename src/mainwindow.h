@@ -103,6 +103,18 @@ private:
      */
     void resetBusDateToLatest();
     /*
+     * 把营收统计的“统计日期”重置为最新未取消订单日期，并把上限设为今天。
+     * 参数：无。
+     * 返回值：无。
+     */
+    void resetRevenueDateToLatest();
+    /*
+     * 事件过滤器：点击班次管理表格空白处时取消当前选中的行。
+     * 参数：watched - 被监视的对象；event - 触发的事件。
+     * 返回值：true 表示事件已处理；否则交由基类处理。
+     */
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    /*
      * 刷新订单管理表格：按 orderFilter_ 的内容过滤后显示全部订单及其状态。
      * 参数：无（筛选关键字来自 orderFilter_）。
      * 返回值：无。
